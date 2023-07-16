@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 /*
  *  PolyMC - Minecraft Launcher
- *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
+ *  Copyright (C) 2022,2023 Sefa Eyeoglu <contact@scrumplex.net>
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -35,9 +35,13 @@
 
 #include "LauncherPartLaunch.h"
 
+#include <QDir>
 #include <QStandardPaths>
 #include <QRegularExpression>
+#include <QtGlobal>
 
+#include "BuildConfig.h"
+#include "MangoHud.h"
 #include "launch/LaunchTask.h"
 #include "minecraft/MinecraftInstance.h"
 #include "FileSystem.h"
@@ -51,6 +55,8 @@
 LauncherPartLaunch::LauncherPartLaunch(LaunchTask *parent) : LaunchStep(parent)
 {
     auto instance = parent->instance();
+
+    // make sure we have a main process
     if (instance->settings()->get("CloseAfterLaunch").toBool())
     {
         std::shared_ptr<QMetaObject::Connection> connection{new QMetaObject::Connection};
@@ -96,6 +102,9 @@ bool fitsInLocal8bit(const QString & string)
 
 void LauncherPartLaunch::executeTask()
 {
+    // if we need to wait for a condition, this can be set to false to prevent launching it at the end of this method
+    bool shouldLaunchMainProcess = true;
+
     QString jarPath = APPLICATION->getJarPath("NewLaunch.jar");
     if (jarPath.isEmpty())
     {
@@ -112,8 +121,6 @@ void LauncherPartLaunch::executeTask()
     QStringList args = minecraftInstance->javaArguments();
     QString allArgs = args.join(", ");
     emit logLine("Java Arguments:\n[" + m_parent->censorPrivateInfo(allArgs) + "]\n\n", MessageLevel::Launcher);
-
-    auto javaPath = FS::ResolveExecutable(instance->settings()->get("JavaPath").toString());
 
     m_process.setProcessEnvironment(instance->createLaunchEnvironment());
 
@@ -136,7 +143,7 @@ void LauncherPartLaunch::executeTask()
 #else
     args << "-Djava.library.path=" + natPath;
 #endif
-
+ 
     args << "-cp";
 #ifdef Q_OS_WIN
     QStringList processed;
@@ -157,7 +164,178 @@ void LauncherPartLaunch::executeTask()
 #endif
     args << "org.prismlauncher.EntryPoint";
 
-    qDebug() << args.join(' ');
+    args.prepend(FS::ResolveExecutable(instance->settings()->get("JavaPath").toString()));
+
+    const auto wantSandbox = minecraftInstance->settings()->get("EnableSandboxing").toBool();
+    auto platformSupportsSandboxing = false;
+    auto canSandbox = false;
+
+#ifdef Q_OS_LINUX
+    const auto bwrapPath = MangoHud::getBwrapBinary();
+    const auto xdgDbusProxyPath = MangoHud::getXDGDbusProxyBinary();
+    platformSupportsSandboxing = true; //
+    canSandbox = !bwrapPath.isEmpty() && !xdgDbusProxyPath.isEmpty();
+#endif
+
+    if (wantSandbox && platformSupportsSandboxing && !canSandbox) {
+        //: Make sure to translate "Enable Sandboxing" the same way as the actual setting
+        const char *reason = QT_TR_NOOP("Sandboxing was requested, but is NOT available on your system.\n"
+                                        "Please turn off sandboxing to proceed launching.\n"
+                                        "You can do so by going to the launcher settings and unchecking \"Enable sandboxing\" under \"Minecraft\"");
+        emit logLine(tr(reason), MessageLevel::Error);
+        emitFailed(tr(reason));
+        return;
+    }
+
+#ifdef Q_OS_LINUX
+    if (wantSandbox && canSandbox) {
+        auto actualRuntimeDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+        QString sandboxedRuntimeDir = "/tmp";
+
+        auto dbusProxyDir = FS::PathCombine(actualRuntimeDir, ".dbus-proxy");
+        // FIXME: add random string
+        auto proxyBusName = QString("%1-bus-proxy-%2-%3").arg(BuildConfig.LAUNCHER_APP_BINARY_NAME, minecraftInstance->id(), "randomtext");
+
+        auto dbusProxyPath = FS::PathCombine(dbusProxyDir, proxyBusName);
+        auto sandboxedDbusProxyPath = FS::PathCombine(sandboxedRuntimeDir, "bus");
+
+        auto hostDbusPath = qEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS", QString("unix:path=%1").arg(FS::PathCombine(actualRuntimeDir, "bus")));
+
+        FS::ensureFolderPathExists(dbusProxyDir);
+
+        const static QStringList systemBinds{
+            "/etc/drirc",
+            "/etc/gai.conf",
+            "/etc/gnutls",
+            "/etc/hostname",
+            "/etc/hosts",
+            "/etc/je_malloc.conf",
+            "/etc/localtime",
+            "/etc/machine-id",
+            "/etc/os-release",
+            "/etc/resolv.conf",
+            "/etc/selinux",
+            "/etc/timezone",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/lib32",
+            "/lib64",
+            "/sys/class",
+            "/sys/dev/char",
+            "/sys/devices/pci0000:00",
+            "/sys/devices/system/cpu",
+        };
+
+        QStringList bwrapArgs{bwrapPath};
+        bwrapArgs << "--unshare-all";
+        bwrapArgs << "--share-net";
+        bwrapArgs << "--die-with-parent";
+        bwrapArgs << "--unsetenv" << "DBUS_SESSION_BUS_ADDRESS";
+
+        // default binds
+        bwrapArgs << "--dev" << "/dev";
+        bwrapArgs << "--dev-bind-try" << "/dev/dri" << "/dev/dri";
+        bwrapArgs << "--proc" << "/proc";
+        bwrapArgs << "--setenv" << "XDG_RUNTIME_DIR" << sandboxedRuntimeDir;
+
+        for (auto path : systemBinds) {
+            auto hostPath = QFileInfo(path).canonicalFilePath();
+            if (hostPath.isEmpty())
+                hostPath = path;
+
+            bwrapArgs << "--ro-bind-try" << hostPath << path;
+        }
+
+        // distribution args
+        // These are probably important so let's put them here
+        bwrapArgs << Commandline::splitArgs(BuildConfig.LINUX_BWRAP_EXTRA_ARGS);
+
+        // desktop integration
+        bwrapArgs << "--ro-bind-try" << QString("%1/pulse").arg(actualRuntimeDir) << QString("%1/pulse").arg(sandboxedRuntimeDir);
+        bwrapArgs << "--ro-bind-try" << QString("%1/pipewire-0").arg(actualRuntimeDir) << QString("%1/pipewire-0").arg(sandboxedRuntimeDir);
+        {
+            auto display = qEnvironmentVariable("DISPLAY");
+            auto defaultXAuthPath = FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::HomeLocation), ".Xauthority");
+            auto xAuthPath = qEnvironmentVariable("XAUTHORITY", defaultXAuthPath);
+            auto wlDisplay = qEnvironmentVariable("WAYLAND_DISPLAY", "wayland-0");
+
+            if (display.startsWith(':')) {
+                auto x11Socket = QString("/tmp/.X11-unix/X%1").arg(display.mid(1));
+                bwrapArgs << "--ro-bind-try" << x11Socket << x11Socket;
+            }
+
+            bwrapArgs << "--ro-bind-try" << xAuthPath << defaultXAuthPath;
+            bwrapArgs << "--unsetenv" << "XAUTHORITY";
+
+            if (wlDisplay.startsWith('/'))
+                bwrapArgs << "--ro-bind-try" << wlDisplay << wlDisplay;
+            else
+                bwrapArgs << "--ro-bind-try" << FS::PathCombine(actualRuntimeDir, wlDisplay) << FS::PathCombine(sandboxedRuntimeDir, wlDisplay);
+        }
+
+        if (minecraftInstance->settings()->get("EnableMangoHud").toBool() && APPLICATION->capabilities() & Application::SupportsMangoHud) {
+            auto mangoHudConfigPath = qEnvironmentVariable("MANGOHUD_CONFIGFILE",
+                    FS::PathCombine(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation), "MangoHud")); 
+            bwrapArgs << "--ro-bind-try" << mangoHudConfigPath << mangoHudConfigPath;
+        }
+
+        // launcher
+        {
+            QString instPath = QDir::toNativeSeparators(QDir(minecraftInstance->instanceRoot()).absolutePath());
+            QString assetsPath = QDir::toNativeSeparators(QDir("assets").absolutePath());
+            QString librariesPath = QDir::toNativeSeparators(QDir("libraries").absolutePath());
+
+            bwrapArgs << "--bind" << instPath << instPath;
+            bwrapArgs << "--ro-bind" << assetsPath << assetsPath;
+            bwrapArgs << "--ro-bind" << librariesPath << librariesPath;
+
+            // also add NewLaunch.jar just to be safe. This is probably covered by /usr or LINUX_BWRAP_EXTRA_ARGS though
+            bwrapArgs << "--ro-bind" << jarPath << jarPath;
+        }
+
+        bwrapArgs << "--setenv" << "MINECRAFT_SANDBOX_VARIANT" << QString("%1-bwrap").arg(BuildConfig.LAUNCHER_APP_BINARY_NAME);
+
+        // Make xdg-open work
+        bwrapArgs << "--bind" << dbusProxyPath << sandboxedDbusProxyPath;
+        bwrapArgs << "--setenv" << "DBUS_SESSION_BUS_ADDRESS" << QString("unix:path=%1").arg(sandboxedDbusProxyPath);
+        // HACK: Workaround to force xdg-open to use XDG Portals
+        bwrapArgs << "--unsetenv" << "XDG_CURRENT_DESKTOP";
+        bwrapArgs << "--setenv" << "DE" << "flatpak"; // this should skip checks in xdg-utils-common for other DEs
+
+        // TODO: add args from environment variable?
+        bwrapArgs << Commandline::splitArgs(minecraftInstance->settings()->get("BwrapExtraArgs").toString());
+
+        bwrapArgs << "--";
+        args = bwrapArgs + args;
+
+        // Prepare xdg-dbus-proxy
+        // TODO: also wrap this using bwrap?
+        QStringList dbusProxyArgs{xdgDbusProxyPath};
+        dbusProxyArgs << hostDbusPath;
+        dbusProxyArgs << dbusProxyPath;
+        dbusProxyArgs << "--filter";
+        dbusProxyArgs << "--fd=1"; // so we can know once it's ready
+        dbusProxyArgs << "--call=org.freedesktop.portal.*=*";
+        dbusProxyArgs << "--broadcast=org.freedesktop.portal.*=@/org/freedesktop/portal/*";
+
+        qDebug() << "sidecar args" << dbusProxyArgs.join(' ');
+
+        m_sideProcess.setProgram(dbusProxyArgs.takeFirst());
+        m_sideProcess.setArguments(dbusProxyArgs);
+
+        std::shared_ptr<QMetaObject::Connection> connection{new QMetaObject::Connection};
+        *connection = connect(&m_sideProcess, &QProcess::readyReadStandardOutput, this, [=]() {
+            // wait for the process to be ready and launch
+            launchMainProcess();
+            disconnect(*connection);
+        });
+        shouldLaunchMainProcess = false;
+    }
+#endif
+
+    qDebug() << "main args" << args.join(' ');
 
     QString wrapperCommandStr = instance->getWrapperCommand().trimmed();
     if(!wrapperCommandStr.isEmpty())
@@ -173,18 +351,32 @@ void LauncherPartLaunch::executeTask()
             return;
         }
         emit logLine("Wrapper command is:\n" + wrapperCommandStr + "\n\n", MessageLevel::Launcher);
-        args.prepend(javaPath);
-        m_process.start(wrapperCommand, wrapperArgs + args);
+        m_process.setProgram(wrapperCommand);
+        m_process.setArguments(wrapperArgs + args);
     }
     else
     {
-        m_process.start(javaPath, args);
+        m_process.setProgram(args.takeFirst());
+        m_process.setArguments(args);
     }
 
+    if (!m_sideProcess.program().isEmpty())
+        m_sideProcess.start();
+
+
+    if (shouldLaunchMainProcess)
+        launchMainProcess();
+}
+
+void LauncherPartLaunch::launchMainProcess()
+{
+    m_process.start();
+
 #ifdef Q_OS_LINUX
+    auto instance = m_parent->instance();
     if (instance->settings()->get("EnableFeralGamemode").toBool() && APPLICATION->capabilities() & Application::SupportsGameMode)
     {
-        auto pid = m_process.processId();
+        auto pid = m_process.processId(); // FIXME: bwrap?
         if (pid)
         {
             gamemode_request_start_for(pid);
@@ -229,6 +421,7 @@ void LauncherPartLaunch::on_state(LoggedProcess::State state)
             //FIXME: make this work again
             // m_postlaunchprocess.processEnvironment().insert("INST_EXITCODE", QString(exitCode));
             // run post-exit
+            m_sideProcess.terminate();
             emitSucceeded();
             break;
         }
@@ -276,6 +469,7 @@ bool LauncherPartLaunch::abort()
         if (state == LoggedProcess::Running || state == LoggedProcess::Starting)
         {
             m_process.kill();
+            m_sideProcess.kill();
         }
     }
     return true;

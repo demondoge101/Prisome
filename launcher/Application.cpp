@@ -4,7 +4,7 @@
 
 /*
  *  Prism Launcher - Minecraft Launcher
- *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
+ *  Copyright (C) 2022,2023 Sefa Eyeoglu <contact@scrumplex.net>
  *  Copyright (C) 2022 Lenny McLennington <lenny@sneed.church>
  *  Copyright (C) 2022 Tayou <tayou@gmx.net>
  *  Copyright (C) 2023 TheKodeToad <TheKodeToad@proton.me>
@@ -608,6 +608,10 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv)
         m_settings->registerSetting("JvmArgs", "");
         m_settings->registerSetting("IgnoreJavaCompatibility", false);
         m_settings->registerSetting("IgnoreJavaWizard", false);
+
+        // Sandboxing Settings
+        m_settings->registerSetting("EnableSandboxing", true);
+        m_settings->registerSetting("BwrapExtraArgs", "");
 
         // Native library workarounds
         m_settings->registerSetting("UseNativeOpenAL", false);
