@@ -246,6 +246,10 @@ set(MINECRAFT_SOURCES
 
     minecraft/gameoptions/GameOptions.h
     minecraft/gameoptions/GameOptions.cpp
+    minecraft/gameoptions/GameOptionsSchema.h
+    minecraft/gameoptions/GameOptionsSchema.cpp
+    minecraft/gameoptions/GameOptionDelegate.h
+    minecraft/gameoptions/GameOptionDelegate.cpp
 
     minecraft/update/AssetUpdateTask.h
     minecraft/update/AssetUpdateTask.cpp
@@ -1011,6 +1015,21 @@ SET(LAUNCHER_SOURCES
     ui/widgets/WideBar.cpp
     ui/widgets/ThemeCustomizationWidget.h
     ui/widgets/ThemeCustomizationWidget.cpp
+    ui/widgets/GameOptions/GameOptionWidget.h
+    ui/widgets/GameOptions/GameOptionWidgetSlider.h
+    ui/widgets/GameOptions/GameOptionWidgetSlider.cpp
+    ui/widgets/GameOptions/GameOptionWidgetComboBox.h
+    ui/widgets/GameOptions/GameOptionWidgetComboBox.cpp
+    ui/widgets/GameOptions/GameOptionWidgetCheckBox.h
+    ui/widgets/GameOptions/GameOptionWidgetCheckBox.cpp
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerFloat.h
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerFloat.cpp
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerInt.h
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerInt.cpp
+    ui/widgets/GameOptions/GameOptionWidgetText.h
+    ui/widgets/GameOptions/GameOptionWidgetText.cpp
+    ui/widgets/GameOptions/GameOptionWidgetKeyBind.h
+    ui/widgets/GameOptions/GameOptionWidgetKeyBind.cpp
 
     # GUI - instance group view
     ui/instanceview/InstanceProxyModel.cpp
@@ -1064,6 +1083,13 @@ qt_wrap_ui(LAUNCHER_UI
     ui/widgets/ModFilterWidget.ui
     ui/widgets/SubTaskProgressBar.ui
     ui/widgets/ThemeCustomizationWidget.ui
+    ui/widgets/GameOptions/GameOptionWidgetSlider.ui
+    ui/widgets/GameOptions/GameOptionWidgetComboBox.ui
+    ui/widgets/GameOptions/GameOptionWidgetCheckBox.ui
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerFloat.ui
+    ui/widgets/GameOptions/GameOptionWidgetSpinnerInt.ui
+    ui/widgets/GameOptions/GameOptionWidgetText.ui
+    ui/widgets/GameOptions/GameOptionWidgetKeyBind.ui
     ui/dialogs/CopyInstanceDialog.ui
     ui/dialogs/ProfileSetupDialog.ui
     ui/dialogs/ProgressDialog.ui
