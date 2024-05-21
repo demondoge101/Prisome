@@ -44,7 +44,7 @@ class ModFolderPage : public ExternalResourcesPage {
     Q_OBJECT
 
    public:
-    explicit ModFolderPage(BaseInstance* inst, std::shared_ptr<ModFolderModel> mods, QWidget* parent = nullptr);
+    explicit ModFolderPage(BaseInstance* inst, std::shared_ptr<ModFolderModel> model, QWidget* parent = nullptr);
     virtual ~ModFolderPage() = default;
 
     void setFilter(const QString& filter) { m_fileSelectionFilter = filter; }
@@ -57,15 +57,14 @@ class ModFolderPage : public ExternalResourcesPage {
     virtual bool shouldDisplay() const override;
 
    public slots:
-    bool onSelectionChanged(const QModelIndex& current, const QModelIndex& previous) override;
+    void updateFrame(const QModelIndex& current, const QModelIndex& previous) override;
 
    private slots:
     void removeItems(const QItemSelection& selection) override;
-    void deleteModMetadata();
 
-    void installMods();
+    void downloadMods();
     void updateMods(bool includeDeps = false);
-    void visitModPages();
+    void deleteModMetadata();
 
    protected:
     std::shared_ptr<ModFolderModel> m_model;
