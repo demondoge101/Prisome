@@ -345,6 +345,8 @@ QList<QString> JavaUtils::FindJavaPaths()
     }
 
     candidates.append(getMinecraftJavaBundle());
+    candidates.append(getPrismJavaBundle());
+    candidates.append(getPrismExtraJavaPaths());
     candidates = addJavasFromEnv(candidates);
     candidates.removeDuplicates();
     return candidates;
@@ -389,6 +391,8 @@ QList<QString> JavaUtils::FindJavaPaths()
     }
 
     javas.append(getMinecraftJavaBundle());
+    javas.append(getPrismJavaBundle());
+    javas.append(getPrismExtraJavaPaths());
     javas = addJavasFromEnv(javas);
     javas.removeDuplicates();
     return javas;
@@ -452,6 +456,8 @@ QList<QString> JavaUtils::FindJavaPaths()
     scanJavaDirs(FS::PathCombine(home, ".gradle/jdks"));
 
     javas.append(getMinecraftJavaBundle());
+    javas.append(getPrismJavaBundle());
+    javas.append(getPrismExtraJavaPaths());
     javas = addJavasFromEnv(javas);
     javas.removeDuplicates();
     return javas;
@@ -465,6 +471,9 @@ QList<QString> JavaUtils::FindJavaPaths()
     javas.append(this->GetDefaultJava()->path);
 
     javas.append(getMinecraftJavaBundle());
+    javas.append(getPrismJavaBundle());
+    javas.append(getPrismExtraJavaPaths());
+    javas.removeDuplicates();
     return addJavasFromEnv(javas);
 }
 #endif
@@ -476,12 +485,10 @@ QString JavaUtils::getJavaCheckPath()
 
 QStringList getMinecraftJavaBundle()
 {
-    QString executable = "java";
     QStringList processpaths;
 #if defined(Q_OS_OSX)
     processpaths << FS::PathCombine(QDir::homePath(), FS::PathCombine("Library", "Application Support", "minecraft", "runtime"));
 #elif defined(Q_OS_WIN32)
-    executable += "w.exe";
 
     auto appDataPath = QProcessEnvironment::systemEnvironment().value("APPDATA", "");
     processpaths << FS::PathCombine(QFileInfo(appDataPath).absoluteFilePath(), ".minecraft", "runtime");
@@ -506,7 +513,7 @@ QStringList getMinecraftJavaBundle()
         auto binFound = false;
         for (auto& entry : entries) {
             if (entry.baseName() == "bin") {
-                javas.append(FS::PathCombine(entry.canonicalFilePath(), executable));
+                javas.append(FS::PathCombine(entry.canonicalFilePath(), JavaUtils::javaExecutable));
                 binFound = true;
                 break;
             }
@@ -517,5 +524,68 @@ QStringList getMinecraftJavaBundle()
             }
         }
     }
+    return javas;
+}
+
+#if defined(Q_OS_WIN32)
+const QString JavaUtils::javaExecutable = "javaw.exe";
+#else
+const QString JavaUtils::javaExecutable = "java";
+#endif
+
+QStringList getPrismJavaBundle()
+{
+    QList<QString> javas;
+
+    auto scanDir = [&](QString prefix) {
+        javas.append(FS::PathCombine(prefix, "jre", "bin", JavaUtils::javaExecutable));
+        javas.append(FS::PathCombine(prefix, "bin", JavaUtils::javaExecutable));
+        javas.append(FS::PathCombine(prefix, JavaUtils::javaExecutable));
+    };
+    auto scanJavaDir = [&](const QString& dirPath) {
+        QDir dir(dirPath);
+        if (!dir.exists())
+            return;
+        auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (auto& entry : entries) {
+            scanDir(entry.canonicalFilePath());
+        }
+    };
+
+    scanJavaDir(APPLICATION->javaPath());
+
+    return javas;
+}
+
+QStringList getPrismExtraJavaPaths()
+{
+    QList<QString> javas;
+
+    QString executable = "java";
+#if defined(Q_OS_WIN32)
+    executable += "w.exe";
+#endif
+
+    auto scanDir = [&](QString prefix) {
+        javas.append(FS::PathCombine(prefix, "jre", "bin", executable));
+        javas.append(FS::PathCombine(prefix, "bin", executable));
+        javas.append(FS::PathCombine(prefix, executable));
+    };
+    auto scanJavaDir = [&](const QString& dirPath) {
+        QDir dir(dirPath);
+        if (!dir.exists())
+            return;
+        auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (auto& entry : entries) {
+            scanDir(entry.canonicalFilePath());
+        }
+    };
+
+    auto extra_paths = APPLICATION->settings()->get("JavaExtraSearchPaths").toStringList();
+    for (auto& entry : extra_paths) {
+        scanDir(entry);
+        scanJavaDir(entry);
+    }
+
     return javas;
 }
