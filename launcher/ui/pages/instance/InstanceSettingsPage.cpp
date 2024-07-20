@@ -36,6 +36,7 @@
  */
 
 #include "InstanceSettingsPage.h"
+#include "DesktopServices.h"
 #include "ui_InstanceSettingsPage.h"
 
 #include <QDialog>
