@@ -62,8 +62,6 @@ void NetRequest::addValidator(Validator* v)
 
 void NetRequest::executeTask()
 {
-    init();
-
     setStatus(tr("Requesting %1").arg(StringUtils::truncateUrlHumanFriendly(m_url, 80)));
 
     if (getState() == Task::State::AbortedByUser) {
@@ -86,7 +84,7 @@ void NetRequest::executeTask()
             break;
         case State::Inactive:
         case State::Failed:
-            emit failed("Failed to initialize sink");
+            emit failed(m_sink->failReason());
             emit finished();
             return;
         case State::AbortedByUser:
@@ -297,7 +295,7 @@ void NetRequest::downloadFinished()
     if (m_state != State::Succeeded) {
         qCDebug(logCat) << getUid().toString() << "Request failed to finalize:" << m_url.toString();
         m_sink->abort();
-        emit failed("failed to finalize the request");
+        emit failed(m_sink->failReason());
         emit finished();
         return;
     }
@@ -313,7 +311,7 @@ void NetRequest::downloadReadyRead()
         auto data = m_reply->readAll();
         m_state = m_sink->write(data);
         if (m_state == State::Failed) {
-            qCCritical(logCat) << getUid().toString() << "Failed to process response chunk";
+            qCCritical(logCat) << getUid().toString() << "Failed to process response chunk:" << m_sink->failReason();
         }
         // qDebug() << "Request" << m_url.toString() << "gained" << data.size() << "bytes";
     } else {
